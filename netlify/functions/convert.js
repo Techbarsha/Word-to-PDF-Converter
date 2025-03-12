@@ -1,6 +1,17 @@
 const axios = require('axios');
 const FormData = require('form-data');
-
+// Add this at the beginning of your handler
+exports.handler = async (event) => {
+    console.log('Incoming request headers:', event.headers);
+    console.log('File size:', event.body.length);
+    
+    // Add file validation
+    if (!event.body || event.body.length === 0) {
+        return {
+            statusCode: 400,
+            body: JSON.stringify({ error: "No file uploaded" })
+        };
+    }
 exports.handler = async (event) => {
     try {
         // Verify API Key
