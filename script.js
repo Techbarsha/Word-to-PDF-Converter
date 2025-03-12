@@ -32,5 +32,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Previous event listeners and other functions
+   // Add this validation in script.js (client-side)
+function handleFile(file) {
+    if (file.size > 25 * 1024 * 1024) { // 25MB limit
+        alert('File size exceeds 25MB limit');
+        return;
+    }
 });
