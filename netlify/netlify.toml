@@ -6,3 +6,9 @@
   from = "/*"
   to = "/index.html"
   status = 200
+  
+[[functions]]
+  node_bundler = "esbuild"
+  timeout = 30  # Max allowed timeout
+  [functions.convert]
+    included_files = ["netlify/functions/convert.js"]
