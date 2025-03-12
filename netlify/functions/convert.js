@@ -1,29 +1,30 @@
 const axios = require('axios');
 const FormData = require('form-data');
-// Add this at the beginning of your handler
-exports.handler = async (event) => {
-    console.log('Incoming request headers:', event.headers);
-    console.log('File size:', event.body.length);
-    
-    // Add file validation
-    if (!event.body || event.body.length === 0) {
-        return {
-            statusCode: 400,
-            body: JSON.stringify({ error: "No file uploaded" })
-        };
-    }
+
 exports.handler = async (event) => {
     try {
-        // Verify API Key
+        // Debugging logs
+        console.log('Incoming request headers:', event.headers);
+        console.log('File size:', event.body.length);
+
+        // Validate API Key
         if (!process.env.CLOUDCONVERT_API_KEY) {
             throw new Error('CloudConvert API key not configured');
         }
 
-        // Parse incoming file
-        const fileBuffer = Buffer.from(event.body, 'binary');
-        const fileName = event.headers['file-name'] || 'document.docx';
+        // Validate file presence
+        if (!event.body || event.body.length === 0) {
+            return {
+                statusCode: 400,
+                body: JSON.stringify({ error: "No file uploaded" })
+            };
+        }
 
-        // Create CloudConvert Job
+        // Parse file data
+        const fileBuffer = Buffer.from(event.body, 'binary');
+        const fileName = event.headers['x-file-name'] || 'document.docx';
+
+        // Create CloudConvert job
         const jobResponse = await axios.post(
             'https://api.cloudconvert.com/v2/jobs',
             {
@@ -51,27 +52,36 @@ exports.handler = async (event) => {
             }
         );
 
-        // Upload file to CloudConvert
-        const uploadUrl = jobResponse.data.data.tasks.find(t => t.name === 'import-1').result.url;
-        const formData = new FormData();
-        formData.append('file', fileBuffer, {
-            filename: fileName,
-            contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        });
+        // Handle job creation errors
+        if (jobResponse.status !== 200) {
+            throw new Error('Failed to create conversion job');
+        }
 
-        await axios.put(uploadUrl, formData, {
-            headers: formData.getHeaders()
+        // Get upload URL
+        const importTask = jobResponse.data.data.tasks.find(t => t.name === 'import-1');
+        if (!importTask) {
+            throw new Error('Could not find import task in CloudConvert response');
+        }
+        const uploadUrl = importTask.result.url;
+
+        // Upload file directly to CloudConvert
+        await axios.put(uploadUrl, fileBuffer, {
+            headers: {
+                'Content-Type': 'application/octet-stream',
+                'Content-Length': fileBuffer.length
+            }
         });
 
         // Monitor conversion status
-        let statusCheck;
+        let status;
         let exportUrl;
         const startTime = Date.now();
-        
+        const jobId = jobResponse.data.data.id;
+
         do {
             await new Promise(resolve => setTimeout(resolve, 2000));
-            statusCheck = await axios.get(
-                `https://api.cloudconvert.com/v2/jobs/${jobResponse.data.data.id}`,
+            const statusResponse = await axios.get(
+                `https://api.cloudconvert.com/v2/jobs/${jobId}`,
                 {
                     headers: {
                         Authorization: `Bearer ${process.env.CLOUDCONVERT_API_KEY}`
@@ -79,17 +89,25 @@ exports.handler = async (event) => {
                 }
             );
 
-            if (Date.now() - startTime > 30000) {
-                throw new Error('Conversion timeout');
+            status = statusResponse.data.data.status;
+            
+            // Handle timeout
+            if (Date.now() - startTime > 25000) {
+                throw new Error('Conversion timeout after 25 seconds');
             }
 
-            status = statusCheck.data.data.status;
             if (status === 'finished') {
-                exportUrl = statusCheck.data.data.tasks.find(t => t.name === 'export-1').result.files[0].url;
+                const exportTask = statusResponse.data.data.tasks.find(t => t.name === 'export-1');
+                exportUrl = exportTask?.result?.files[0]?.url;
             }
         } while (status === 'processing' || status === 'waiting');
 
-        // Return converted PDF
+        // Handle failed conversion
+        if (status !== 'finished' || !exportUrl) {
+            throw new Error('Conversion failed with status: ' + status);
+        }
+
+        // Download converted PDF
         const pdfResponse = await axios.get(exportUrl, {
             responseType: 'arraybuffer'
         });
@@ -110,7 +128,7 @@ exports.handler = async (event) => {
             statusCode: error.response?.status || 500,
             body: JSON.stringify({
                 error: error.message,
-                details: error.response?.data
+                details: error.response?.data || error.stack
             })
         };
     }
