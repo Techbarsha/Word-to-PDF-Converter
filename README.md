@@ -1,5 +1,4 @@
 # Word-to-PDF-Converter
-# Word to PDF Converter
 
 This project converts Word documents (.docx) to PDF format.
 
